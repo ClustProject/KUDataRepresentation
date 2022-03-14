@@ -54,34 +54,34 @@ class Encode():
         :rtype: dataFrame
         """
         
-        if model == 'rae_mepc':
+        if self.odel == 'rae_mepc':
             result = self.RAE_MEPC()
-        elif model == 'transformer':
+        elif self.model == 'transformer':
             result = self.Transformer()
-        elif model == 'ts_tcc':
+        elif self.model == 'ts_tcc':
             result = self.TS_TCC()
-        elif model == 'ts2vec':
+        elif self.model == 'ts2vec':
             result = self.TS2Vec()
         return result
         
     def RAE_MEPC(self):
         model = train_RAE_MEPC(self.parameter, self.train_loader, self.valid_loader)
-        result_repr = encode_RAE_MEPC(self.parameter, self.test_loader)
+        result_repr = encode_RAE_MEPC(self.parameter, self.test_loader, model)
         return result_repr
     
     def Transformer(self):
         model = train_Transformer(self.parameter, self.train_loader, self.valid_loader)
-        result_repr = encode_Transformer(self.parameter, self.test_loader)
+        result_repr = encode_Transformer(self.parameter, self.test_loader, model)
         return result_repr
     
     def TS_TCC(self):
         model = train_TS_TCC(self.parameter, self.train_loader, self.valid_loader)
-        result_repr = encode_TS_TCC(self.parameter, self.test_loader)
+        result_repr = encode_TS_TCC(self.parameter, self.test_loader, model)
         return result_repr
     
     def TS2Vec(self):
         model = train_TS2Vec(self.parameter, self.train_loader, self.valid_loader)
-        result_repr = encode_TS2Vec(self.parameter, self.test_loader)
+        result_repr = encode_TS2Vec(self.parameter, self.test_loader, model)
         return result_repr
             
     def get_loaders(self, train_data, test_data, window_size, batch_size):
