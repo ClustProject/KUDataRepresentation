@@ -9,7 +9,7 @@ import torch.nn as nn
 # from models.rae_mepc.main import train_RAE_MEPC, encode_RAE_MEPC
 # from models.transformer.main import train_Transformer, encode_Transformer
 # from models.ts_tcc.main import train_TS_TCC, encode_TS_TCC
-# from models.ts2vec.main import train_TS2Vec, encode_TS2Vec
+from models.ts2vec.main import train_TS2Vec, encode_TS2Vec
 
 
 class Encode():
@@ -54,7 +54,7 @@ class Encode():
         :rtype: dataFrame
         """
         
-        if self.odel == 'rae_mepc':
+        if self.model == 'rae_mepc':
             result = self.RAE_MEPC()
         elif self.model == 'transformer':
             result = self.Transformer()
