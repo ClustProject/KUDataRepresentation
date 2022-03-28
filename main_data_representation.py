@@ -54,7 +54,7 @@ class Encode():
 
     def getResult(self) :
         """
-        getResut by model and its parameter
+        getResult by model and its parameter
         :return: data representation
         :rtype: dataFrame
         """
