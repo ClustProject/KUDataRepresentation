@@ -6,12 +6,12 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-# from models.rae_mepc.main import train_RAE_MEPC, encode_RAE_MEPC
+from models.rae_mepc.main import train_RAE_MEPC, encode_RAE_MEPC
 
 from models.stoc.main import train_STOC, encode_STOC
 from models.stoc.modules.dataset import BuildDataset
 
-# from models.ts_tcc.main import train_TS_TCC, encode_TS_TCC
+from models.ts_tcc.main import train_TS_TCC, encode_TS_TCC
 from models.ts2vec.main import train_TS2Vec, encode_TS2Vec
 
 
@@ -103,9 +103,9 @@ class Encode():
         if model == 'stoc':
             # 예측 모델 학습을 위한 dataset 생성
             # shape=(batch_size x window_size x input_dims)
-            trainset  = BuildDataset(self.parameter, x_train, overlap=True)
-            validset  = BuildDataset(self.parameter, x_valid, overlap=True)
-            testset  = BuildDataset(self.parameter, x_test, overlap=False)
+            trainset = BuildDataset(self.parameter, x_train, overlap=True)
+            validset = BuildDataset(self.parameter, x_valid, overlap=True)
+            testset = BuildDataset(self.parameter, x_test, overlap=False)
 
         else:
             # train/validation/test 데이터를 window_size 시점 길이로 분할
