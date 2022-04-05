@@ -1,16 +1,10 @@
-import os 
-import random
-import pandas as pd
-import numpy as np
-
 import torch
-import torch.nn as nn
+import numpy as np
+from sklearn.model_selection import train_test_split
 
-from models.rae_mepc.main import train_RAE_MEPC, encode_RAE_MEPC
-
-from models.stoc.main import train_STOC, encode_STOC
 from models.stoc.modules.dataset import BuildDataset
-
+from models.rae_mepc.main import train_RAE_MEPC, encode_RAE_MEPC
+from models.stoc.main import train_STOC, encode_STOC
 from models.ts_tcc.main import train_TS_TCC, encode_TS_TCC
 from models.ts2vec.main import train_TS2Vec, encode_TS2Vec
 
@@ -46,11 +40,7 @@ class Encode():
         self.model = config['model']
         self.parameter = config['parameter']
 
-        self.train_loader, self.valid_loader, self.test_loader = self.get_loaders(train_data,
-                                                                                test_data,
-                                                                                self.parameter["window_size"],
-                                                                                self.parameter["batch_size"], 
-                                                                                self.model)
+        self.train_loader, self.valid_loader, self.test_loader = self.get_loaders(train_data, test_data)
 
     def getResult(self) :
         """
@@ -58,73 +48,59 @@ class Encode():
         :return: data representation
         :rtype: dataFrame
         """
-        
         if self.model == 'rae_mepc':
-            result = self.RAE_MEPC()
+            trained_model = train_RAE_MEPC(self.parameter, self.train_loader, self.valid_loader)
+            result = encode_RAE_MEPC(self.parameter, self.test_loader, trained_model)
         elif self.model == 'stoc':
-            result = self.STOC()
+            trained_model = train_STOC(self.parameter, self.train_loader, self.valid_loader)
+            result = encode_STOC(self.parameter, self.test_loader, trained_model)
         elif self.model == 'ts_tcc':
-            result = self.TS_TCC()
+            trained_model = train_TS_TCC(self.parameter, self.train_loader, self.valid_loader)
+            result = encode_TS_TCC(self.parameter, self.test_loader, trained_model)
         elif self.model == 'ts2vec':
-            result = self.TS2Vec()
+            trained_model = train_TS2Vec(self.parameter, self.train_loader, self.valid_loader)
+            result = encode_TS2Vec(self.parameter, self.test_loader, trained_model)
         return result
-        
-    def RAE_MEPC(self):
-        model = train_RAE_MEPC(self.parameter, self.train_loader, self.valid_loader)
-        result_repr = encode_RAE_MEPC(self.parameter, self.test_loader, model)
-        return result_repr
-    
-    def STOC(self):
-        model = train_STOC(self.parameter, self.train_loader, self.valid_loader)
-        result_repr = encode_STOC(self.parameter, self.test_loader, model)
-        return result_repr
-    
-    def TS_TCC(self):
-        model = train_TS_TCC(self.parameter, self.train_loader, self.valid_loader)
-        result_repr = encode_TS_TCC(self.parameter, self.test_loader, model)
-        return result_repr
-    
-    def TS2Vec(self):
-        model = train_TS2Vec(self.parameter, self.train_loader, self.valid_loader)
-        result_repr = encode_TS2Vec(self.parameter, self.test_loader, model)
-        return result_repr
             
-    def get_loaders(self, train_data, test_data, window_size, batch_size, model):
-        # train data를 시간순으로 8:2의 비율로 train/validation set으로 분할
-        n_train = int(0.8 * len(train_data))
-        n_valid = len(train_data) - n_train
-        n_test = len(test_data)
+    def get_loaders(self, x_train, x_test):
+        window_size = self.parameter['window_size']
+        batch_size = self.parameter['batch_size']
+        if self.model == 'stoc':
+            forecast_step = self.parameter['forecast_step']
 
-        # train/validation set의 개수에 맞게 데이터 분할
-        x_train = train_data[:n_train]
-        x_valid = train_data[n_train:]
-        x_test = test_data
+        # train data를 8:2의 비율로 train/validation set으로 분할
+        x_train, x_valid = train_test_split(x_train, test_size=0.2, random_state=42)
 
-        if model == 'stoc':
-            # 예측 모델 학습을 위한 dataset 생성
-            # shape=(batch_size x window_size x input_dims)
-            trainset = BuildDataset(self.parameter, x_train, overlap=True)
-            validset = BuildDataset(self.parameter, x_valid, overlap=True)
-            testset = BuildDataset(self.parameter, x_test, overlap=False)
+        datasets = []
+        for dataset in [x_train, x_valid, x_test]:
+            # 전체 시간 길이 설정
+            T = dataset.shape[-1]
 
-        else:
-            # train/validation/test 데이터를 window_size 시점 길이로 분할
-            datasets = []
-            for set in [(x_train, n_train), (x_valid, n_valid), (x_test, n_test)]:
-                # 전체 시간 길이 설정
-                T = set[0].shape[-1]
-                # 전체 X 데이터를 window_size 크기의 time window로 분할
-                windows = np.split(set[0][:, :, :window_size * (T // window_size)], (T // window_size), -1)
+            # 예측 모델을 위한 train/validation/test 데이터셋 생성: shape=(batch_size, input_dims, window_size)
+            if self.model == 'stoc':
+                # 전체 데이터를 window_size 크기의 time window로 분할하여 input을 생성함
+                windows = np.split(dataset[:, :, -1 * forecast_step][:, :, :window_size * (T // window_size)], (T // window_size), -1)
                 windows = np.concatenate(windows, 0)
+
+                # input에 대하여 forecast_step 시점만큼의 미래 데이터를 target으로 사용함
+                targets = np.roll(dataset, -1 * forecast_step)
+                targets = np.split(targets[:, :, -1 * forecast_step][:, :, :window_size * (T // window_size)], (T // window_size), -1)
+                
                 # 분할된 time window 단위의 데이터를 tensor 형태로 축적
-                datasets.append(torch.utils.data.TensorDataset(torch.Tensor(windows)))
+                datasets.append(torch.utils.data.TensorDataset(torch.FloatTensor(windows), torch.FloatTensor(targets)))
+            
+            # 복원 모델을 위한 train/validation/test 데이터셋 생성: shape=(batch_size, input_dims, window_size)
+            else:
+                # 전체 데이터를 window_size 크기의 time window로 분할하여 input을 생성함
+                windows = np.split(dataset[:, :, :window_size * (T // window_size)], (T // window_size), -1)
+                windows = np.concatenate(windows, 0)
 
-            # train/validation/test DataLoader 구축: shape=(batch_size x input_dims x window_size)
-            trainset, validset, testset = datasets[0], datasets[1], datasets[2]
+                # 분할된 time window 단위의 데이터를 tensor 형태로 축적
+                datasets.append(torch.utils.data.TensorDataset(torch.FloatTensor(windows)))
 
+        # train/validation/test DataLoader 구축
+        trainset, validset, testset = datasets[0], datasets[1], datasets[2]
         train_loader = torch.utils.data.DataLoader(trainset, batch_size=batch_size, shuffle=True)
         valid_loader = torch.utils.data.DataLoader(validset, batch_size=batch_size, shuffle=False)
         test_loader = torch.utils.data.DataLoader(testset, batch_size=batch_size, shuffle=False)
-
         return train_loader, valid_loader, test_loader
-        

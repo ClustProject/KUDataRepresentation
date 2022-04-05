@@ -115,8 +115,8 @@ class Trainer():
         epoch_loss = 0
 
         for x, targets in train_loader:
-            x = x.to(self.device)  # batch, window_size, input_dim 
-            targets = targets.to(self.device)  # batch, window_size, input_dim 
+            x = x.transpose(1, 2).to(self.device)  # batch, window_size, input_dim 
+            targets = targets.transpose(1, 2).to(self.device)  # batch, window_size, input_dim 
 
             self.optimizer.zero_grad()
             output = self.model(True, x)  # batch, window_size, input_dim 
@@ -162,8 +162,8 @@ class Trainer():
         eval_loss = 0.
         with torch.no_grad():
             for x, targets in valid_loader:
-                x = x.to(self.device)  
-                targets = targets.to(self.device)  
+                x = x.transpose(1, 2).to(self.device)  
+                targets = targets.transpose(1, 2).to(self.device)  
 
                 output = self.model(True, x)
                 eval_loss += self.criterion(output, targets).item()
@@ -186,7 +186,7 @@ class Trainer():
         final_output = torch.Tensor().to(self.device) 
         with torch.no_grad():
             for x in test_loader:
-                x = x.to(self.device) 
+                x = x.transpose(1, 2).to(self.device) 
                 output = self.model(False, x)
                 final_output = torch.cat([final_output, output], dim=0)
 
