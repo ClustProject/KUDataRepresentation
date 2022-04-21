@@ -1,12 +1,11 @@
 import torch
+import copy
 import numpy as np
 from sklearn.model_selection import train_test_split
 
-from models.stoc.modules.dataset import BuildDataset
-from models.rae_mepc.main import train_RAE_MEPC, encode_RAE_MEPC
-from models.stoc.main import train_STOC, encode_STOC
-from models.ts_tcc.main import train_TS_TCC, encode_TS_TCC
-from models.ts2vec.main import train_TS2Vec, encode_TS2Vec
+from models.ts2vec.ts2vec import Trainer_TS2Vec
+# from models.ts_tcc.trainer import Trainer_TS_TCC
+# from models.stoc.trainer import Trainer_STOC
 
 
 class Encode():
@@ -14,17 +13,17 @@ class Encode():
         """
         Initialize Alignment class and prepare OverlapData based on min-max index.
 
-        :param config: config 
+        :param config: config
         :type config: dictionary
 
         :param train_data: train data whose shape is (batch_size x input_size x seq_len)
         :type train_data: numpy array
-        
+
         :param test_data: test data whose shape is (batch_size x input_size x seq_len)
         :type test_data: numpy array
 
         example
-            >>> config = { 
+            >>> config = {
                     "window_size": 64, # 모델의 input sequence 길이, int(default: 64, 범위: 0 이상 & 원래 데이터의 sequence 길이 이하)
                     "input_dim": 561, # 데이터의 변수 개수, int
                     "repr_dim": 128, # data representation 차원, int(default: 64, 범위: 1 이상, 2의 지수로 설정 권장)
@@ -37,60 +36,128 @@ class Encode():
             >>> output = data_representation.getResult()
         """
 
-        self.model = config['model']
+        self.model_name = config['model']
         self.parameter = config['parameter']
 
-        self.train_loader, self.valid_loader, self.test_loader = self.get_loaders(train_data, test_data)
+        self.model_config = self.get_model_config(self.parameter)
+        self.train_loader, self.valid_loader, self.test_loader, self.inference_train_loader = self.get_loaders(train_data, test_data)
 
-    def getResult(self) :
+    def build_model(self):
         """
-        getResult by model and its parameter
-        :return: data representation
-        :rtype: dataFrame
+        Train model and return best model
+
+        :return: best trained model
+        :rtype: model
         """
-        if self.model == 'rae_mepc':
-            trained_model = train_RAE_MEPC(self.parameter, self.train_loader, self.valid_loader)
-            result = encode_RAE_MEPC(self.parameter, self.test_loader, trained_model)
-        elif self.model == 'stoc':
-            trained_model = train_STOC(self.parameter, self.train_loader, self.valid_loader)
-            result = encode_STOC(self.parameter, self.test_loader, trained_model)
-        elif self.model == 'ts_tcc':
-            trained_model = train_TS_TCC(self.parameter, self.train_loader, self.valid_loader)
-            result = encode_TS_TCC(self.parameter, self.test_loader, trained_model)
-        elif self.model == 'ts2vec':
-            trained_model = train_TS2Vec(self.parameter, self.train_loader, self.valid_loader)
-            result = encode_TS2Vec(self.parameter, self.test_loader, trained_model)
-        return result
-            
+        if self.model_name == 'ts2vec':
+            model = Trainer_TS2Vec(**self.model_config)
+        elif self.model_name == 'ts_tcc':
+            model = Trainer_TS_TCC(self.model_config)
+        elif self.model_name == 'rae_mepc':
+            model = Trainer_STOC(**self.model_config)
+        elif self.model_name == 'stoc':
+            model = Trainer_STOC(**self.model_config)
+        return model
+
+    def train_model(self, model):
+        """
+        Train model and return best model
+
+        :return: best trained model
+        :rtype: model
+        """
+
+        print("Start training model\n")
+
+        if self.model_name == 'ts2vec':
+            best_model = model.fit(self.train_loader, self.valid_loader)
+        elif self.model_name == 'ts_tcc':
+            best_model = model.fit(self.train_loader, self.valid_loader)
+        elif self.model_name == 'rae_mepc':
+            best_model = model.fit(self.train_loader, self.valid_loader)
+        elif self.model_name == 'stoc':
+            best_model = model.fit(self.train_loader, self.valid_loader, **self.model_config)
+        return best_model
+
+    def save_model(self, best_model, best_model_path):
+        torch.save(best_model.state_dict(), best_model_path)
+
+    def encode_data(self, model, best_model_path):
+        """
+        Encode representations from trained model
+
+        :param best_model: best trained model
+        :type best_model: model
+
+        :return: representation vector
+        :rtype: numpy array
+        """
+
+        print("Start encoding data\n")
+
+        # load best model
+        if self.model_name == 'ts2vec':
+            model.net.load_state_dict(torch.load(best_model_path))
+        elif self.model_name == 'ts_tcc':
+            model.model.load_state_dict(torch.load(best_model_path).model)
+        elif self.model_name == 'stoc':
+            model.model.load_state_dict(torch.load(best_model_path))
+
+        # get representation
+        train_repr = model.encode(self.inference_train_loader)
+        test_repr = model.encode(self.test_loader)
+        return train_repr, test_repr
+
+    def get_model_config(self, config):
+        # set configuration for training model
+        model_config = copy.deepcopy(config)
+        if self.model_name == 'ts2vec':
+            replaced_key_dict = {
+                'input_dim': 'input_dims',
+                'repr_dim': 'output_dims',
+                'num_epochs': 'n_epochs'
+            }
+        elif self.model_name == 'ts_tcc':
+            replaced_key_dict = {
+                'input_dim': 'input_channels',
+                'repr_dim': 'final_out_channels',
+                'num_epochs': 'num_epoch',
+            }
+        elif self.model_name == 'rae_mepc':
+            replaced_key_dict = {
+                'repr_dim': 'output_dims'
+            }
+        elif self.model_name == 'stoc':
+            replaced_key_dict = {
+                'repr_dim': 'output_dim',
+            }
+
+        for config_key in replaced_key_dict:
+            model_config_key = replaced_key_dict[config_key]
+            model_config[model_config_key] = model_config.pop(config_key)
+        return model_config
+
     def get_loaders(self, x_train, x_test):
-        window_size = self.parameter['window_size']
         batch_size = self.parameter['batch_size']
-        if self.model == 'stoc':
-            forecast_step = self.parameter['forecast_step']
 
         # train data를 8:2의 비율로 train/validation set으로 분할
+        inference_x_train = copy.deepcopy(x_train)
         x_train, x_valid = train_test_split(x_train, test_size=0.2, random_state=42)
 
         datasets = []
-        for dataset in [x_train, x_valid, x_test]:
+        for dataset in [x_train, x_valid, x_test, inference_x_train]:
             # 전체 시간 길이 설정
             T = dataset.shape[-1]
 
-            # 예측 모델을 위한 train/validation/test 데이터셋 생성: shape=(batch_size, input_dims, window_size)
-            if self.model == 'stoc':
-                # 전체 데이터를 window_size 크기의 time window로 분할하여 input을 생성함
-                windows = np.split(dataset[:, :, -1 * forecast_step][:, :, :window_size * (T // window_size)], (T // window_size), -1)
-                windows = np.concatenate(windows, 0)
+            # TS2Vec & TS-TCC train/validation/test 데이터셋 생성: shape = (batch_size, input_dims, time_steps)
+            if self.model_name in ['ts2vec', 'ts_tcc']:
+                # 각 관측치의 데이터를 tensor 형태로 축적
+                datasets.append(torch.utils.data.TensorDataset(torch.FloatTensor(dataset)))
 
-                # input에 대하여 forecast_step 시점만큼의 미래 데이터를 target으로 사용함
-                targets = np.roll(dataset, -1 * forecast_step)
-                targets = np.split(targets[:, :, -1 * forecast_step][:, :, :window_size * (T // window_size)], (T // window_size), -1)
-                
-                # 분할된 time window 단위의 데이터를 tensor 형태로 축적
-                datasets.append(torch.utils.data.TensorDataset(torch.FloatTensor(windows), torch.FloatTensor(targets)))
-            
-            # 복원 모델을 위한 train/validation/test 데이터셋 생성: shape=(batch_size, input_dims, window_size)
-            else:
+            # RAE-MEPC 모델을 위한 train/validation/test 데이터셋 생성: shape = (batch_size, input_dims, window_size)
+            elif self.model_name == 'rae_mepc':
+                window_size = self.parameter['window_size']
+
                 # 전체 데이터를 window_size 크기의 time window로 분할하여 input을 생성함
                 windows = np.split(dataset[:, :, :window_size * (T // window_size)], (T // window_size), -1)
                 windows = np.concatenate(windows, 0)
@@ -98,9 +165,28 @@ class Encode():
                 # 분할된 time window 단위의 데이터를 tensor 형태로 축적
                 datasets.append(torch.utils.data.TensorDataset(torch.FloatTensor(windows)))
 
+            # STOC 모델을 위한 train/validation/test 데이터셋 생성: shape = (batch_size, input_dims, window_size)
+            elif self.model_name == 'stoc':
+                window_size = self.parameter['window_size']
+                forecast_step = self.parameter['forecast_step']
+
+                # 전체 데이터를 window_size 크기의 time window로 분할하여 input을 생성함
+                windows = np.split(dataset[:, :, -1 * forecast_step][:, :, :window_size * (T // window_size)],
+                                   (T // window_size), -1)
+                windows = np.concatenate(windows, 0)
+
+                # input에 대하여 forecast_step 시점만큼의 미래 데이터를 target으로 사용함
+                targets = np.roll(dataset, -1 * forecast_step)
+                targets = np.split(targets[:, :, -1 * forecast_step][:, :, :window_size * (T // window_size)],
+                                   (T // window_size), -1)
+
+                # 분할된 time window 단위의 데이터를 tensor 형태로 축적
+                datasets.append(torch.utils.data.TensorDataset(torch.FloatTensor(windows), torch.FloatTensor(targets)))
+
         # train/validation/test DataLoader 구축
-        trainset, validset, testset = datasets[0], datasets[1], datasets[2]
-        train_loader = torch.utils.data.DataLoader(trainset, batch_size=batch_size, shuffle=True)
-        valid_loader = torch.utils.data.DataLoader(validset, batch_size=batch_size, shuffle=False)
-        test_loader = torch.utils.data.DataLoader(testset, batch_size=batch_size, shuffle=False)
-        return train_loader, valid_loader, test_loader
+        train_set, valid_set, test_set, inference_train_set = datasets[0], datasets[1], datasets[2], datasets[3]
+        train_loader = torch.utils.data.DataLoader(train_set, batch_size=batch_size, shuffle=True)
+        valid_loader = torch.utils.data.DataLoader(valid_set, batch_size=batch_size, shuffle=False)
+        test_loader = torch.utils.data.DataLoader(test_set, batch_size=batch_size, shuffle=False)
+        inference_train_loader = torch.utils.data.DataLoader(inference_train_set, batch_size=batch_size, shuffle=False)
+        return train_loader, valid_loader, test_loader, inference_train_loader
