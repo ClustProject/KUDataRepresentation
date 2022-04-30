@@ -4,8 +4,8 @@ import numpy as np
 from sklearn.model_selection import train_test_split
 
 from models.ts2vec.ts2vec import Trainer_TS2Vec
-# from models.ts_tcc.trainer import Trainer_TS_TCC
-# from models.stoc.trainer import Trainer_STOC
+from models.ts_tcc.trainer import Trainer_TS_TCC
+from models.stoc.trainer import Trainer_STOC
 
 
 class Encode():
@@ -54,9 +54,9 @@ class Encode():
         elif self.model_name == 'ts_tcc':
             model = Trainer_TS_TCC(self.model_config)
         elif self.model_name == 'rae_mepc':
-            model = Trainer_STOC(**self.model_config)
+            model = Trainer_RAE_MEPC(**self.model_config)
         elif self.model_name == 'stoc':
-            model = Trainer_STOC(**self.model_config)
+            model = Trainer_STOC(self.model_config)
         return model
 
     def train_model(self, model):
@@ -76,7 +76,7 @@ class Encode():
         elif self.model_name == 'rae_mepc':
             best_model = model.fit(self.train_loader, self.valid_loader)
         elif self.model_name == 'stoc':
-            best_model = model.fit(self.train_loader, self.valid_loader, **self.model_config)
+            best_model = model.fit(self.train_loader, self.valid_loader)
         return best_model
 
     def save_model(self, best_model, best_model_path):
@@ -99,7 +99,7 @@ class Encode():
         if self.model_name == 'ts2vec':
             model.net.load_state_dict(torch.load(best_model_path))
         elif self.model_name == 'ts_tcc':
-            model.model.load_state_dict(torch.load(best_model_path).model)
+            model.model.load_state_dict(torch.load(best_model_path))
         elif self.model_name == 'stoc':
             model.model.load_state_dict(torch.load(best_model_path))
 
@@ -130,6 +130,7 @@ class Encode():
         elif self.model_name == 'stoc':
             replaced_key_dict = {
                 'repr_dim': 'output_dim',
+                'hidden_dim': 'feature_size'
             }
 
         for config_key in replaced_key_dict:
@@ -159,7 +160,7 @@ class Encode():
                 window_size = self.parameter['window_size']
 
                 # 전체 데이터를 window_size 크기의 time window로 분할하여 input을 생성함
-                windows = np.split(dataset[:, :, :window_size * (T // window_size)], (T // window_size), -1)
+                windows = np.split(dataset[:, :window_size * (T // window_size)], (T // window_size), -1)
                 windows = np.concatenate(windows, 0)
 
                 # 분할된 time window 단위의 데이터를 tensor 형태로 축적
@@ -171,22 +172,24 @@ class Encode():
                 forecast_step = self.parameter['forecast_step']
 
                 # 전체 데이터를 window_size 크기의 time window로 분할하여 input을 생성함
-                windows = np.split(dataset[:, :, -1 * forecast_step][:, :, :window_size * (T // window_size)],
-                                   (T // window_size), -1)
+                windows = np.split(dataset[:, :, :-1 * forecast_step][:, :, :window_size * ((T - forecast_step) // window_size)],
+                                   ((T - forecast_step) // window_size), -1)
                 windows = np.concatenate(windows, 0)
 
                 # input에 대하여 forecast_step 시점만큼의 미래 데이터를 target으로 사용함
-                targets = np.roll(dataset, -1 * forecast_step)
-                targets = np.split(targets[:, :, -1 * forecast_step][:, :, :window_size * (T // window_size)],
-                                   (T // window_size), -1)
+                targets = np.roll(dataset, -1 * forecast_step, axis=2)
+                targets = np.split(targets[:, :, :-1 * forecast_step][:, :, :window_size * ((T - forecast_step) // window_size)],
+                                   ((T - forecast_step) // window_size), -1)
+                targets = np.concatenate(targets, 0)
+                targets = targets[:, :, :forecast_step]
 
                 # 분할된 time window 단위의 데이터를 tensor 형태로 축적
                 datasets.append(torch.utils.data.TensorDataset(torch.FloatTensor(windows), torch.FloatTensor(targets)))
 
         # train/validation/test DataLoader 구축
         train_set, valid_set, test_set, inference_train_set = datasets[0], datasets[1], datasets[2], datasets[3]
-        train_loader = torch.utils.data.DataLoader(train_set, batch_size=batch_size, shuffle=True)
-        valid_loader = torch.utils.data.DataLoader(valid_set, batch_size=batch_size, shuffle=False)
+        train_loader = torch.utils.data.DataLoader(train_set, batch_size=batch_size, shuffle=True, drop_last=True)
+        valid_loader = torch.utils.data.DataLoader(valid_set, batch_size=batch_size, shuffle=True, drop_last=True)
         test_loader = torch.utils.data.DataLoader(test_set, batch_size=batch_size, shuffle=False)
         inference_train_loader = torch.utils.data.DataLoader(inference_train_set, batch_size=batch_size, shuffle=False)
         return train_loader, valid_loader, test_loader, inference_train_loader
