@@ -148,6 +148,7 @@ class Decoder(nn.Module):
         self.skip_len = skip_len
         self.all_decode_masks = all_decode_masks
         self.device = device
+        self.lambda_combine = 0.1
 
         self.input_layer = nn.Linear(ninp, nhid)
         self.stack_lstm = StackedLSTMCell(nhid, nlayer, device)
@@ -199,10 +200,10 @@ class Decoder(nn.Module):
                 hiddens_combined = w1 * hiddens[-1][0] + w2 * all_hiddens[t - self.skip_len]
                 hiddens[-1] = (hiddens_combined, hiddens[-1][1])
 
-            index = int(np.floor(t / self.args.tau))
+            index = int(np.floor(t / self.args['tau']))
             if index >= len(previous_hiddens):
                 index = -1
-            hiddens_combined = self.args.lambda_combine * hiddens[-1][0] + (1 - self.args.lambda_combine) * (
+            hiddens_combined = self.lambda_combine * hiddens[-1][0] + (1 - self.lambda_combine) * (
                 self.combine_multiscales(torch.cat((hiddens[-1][0], previous_hiddens[index]), dim=-1)))
             hiddens[-1] = (hiddens_combined, hiddens[-1][1])
 
@@ -243,19 +244,22 @@ class RAE_MEPC(nn.Module):
     def __init__(self, args):
         super(RAE_MEPC, self).__init__()
         self.args = args
-        self.ninp = args.ninp
-        self.nhid = args.hidden_size
-        self.dec_nlayers = args.dec_nlayers
-        self.dec_Ls = args.dec_Ls
-        self.device = args.device
+        self.ninp = args['ninp']
+        self.nhid = args['hidden_size']
+        self.dec_nlayers = args['dec_nlayers']
+        self.dec_Ls = args['dec_Ls']
+        self.device = args['device']
         self.criterion = nn.MSELoss()
+        self.lambda_dtw = 0.0001
+        self.lambda_pred = 1
+        self.gamma = 0.1
 
-        self.set_encoders = MultiEncoder(self.ninp, self.nhid, args.window_length, args.decay_ratio).to(self.device)
+        self.set_encoders = MultiEncoder(self.ninp, self.nhid, args['window_length'], 1 / args['tau']).to(self.device)
 
         self.set_decoders = nn.ModuleList()
         for i in range(self.dec_nlayers):
             self.set_decoders.append(
-                Decoder(self.args, self.args.all_decode_masks[i], self.ninp, self.nhid, 1, self.device,
+                Decoder(self.args, self.args['all_decode_masks'][i], self.ninp, self.nhid, 1, self.device,
                         self.dec_Ls[i]).to(self.device))
 
         self.pred_decoder = PredDecoder(self.ninp, self.nhid).to(self.device)
@@ -273,7 +277,7 @@ class RAE_MEPC(nn.Module):
 
         for i in range(self.dec_nlayers):
 
-            dec_length = self.args.dec_lengths[i]
+            dec_length = self.args['dec_lengths'][i]
             if i == 0:
                 outputs, hiddens = self.set_decoders[i](shared_hiddens, dec_length)
             else:
@@ -297,10 +301,10 @@ class RAE_MEPC(nn.Module):
         all_final_outputs, _ = self.get_dec_outputs(enc_hid)
         pred_outputs = self.pred_decoder(pure_inputs, enc_hid[0])
 
-        target_x = self.get_target(pure_inputs).to(self.args.device)
+        target_x = self.get_target(pure_inputs).to(self.args['device'])
         teachers = []
         for i in range(self.dec_nlayers):
-            dowm_seq_len = self.args.dec_lengths[i]
+            dowm_seq_len = self.args['dec_lengths'][i]
             step_size = int(np.floor(np.shape(target_x)[1] / dowm_seq_len))
             teachers.append(target_x[:, 0:step_size:, :])
 
@@ -311,14 +315,14 @@ class RAE_MEPC(nn.Module):
             for i in range(len(all_final_outputs)):
                 if i < (len(all_final_outputs) - 1):
                     # smooted DTW loss
-                    dtw_loss, dtw_path = dilate_loss(all_final_outputs[i], target_x, self.args.gamma, self.args.device)
+                    dtw_loss, dtw_path = dilate_loss(all_final_outputs[i], target_x, self.gamma, self.args['device'])
                     collected_dtw_paths.append(dtw_path)
                     dtw_losses += dtw_loss
                 else:
                     dtw_losses = dtw_losses / (len(all_final_outputs) - 1)
-                    loss += self.args.lambda_dtw * dtw_losses
+                    loss += self.lambda_dtw * dtw_losses
                     loss += self.criterion(all_final_outputs[i], target_x)
-                    loss += self.args.lambda_pred * self.criterion(pred_outputs, pred_target)
+                    loss += self.lambda_pred * self.criterion(pred_outputs, pred_target)
         else:
             loss += self.criterion(all_final_outputs[-1], target_x)
 

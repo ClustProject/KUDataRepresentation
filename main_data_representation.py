@@ -3,8 +3,9 @@ import copy
 import numpy as np
 from sklearn.model_selection import train_test_split
 
-from models.ts2vec.ts2vec import Trainer_TS2Vec
+from models.ts2vec.trainer import Trainer_TS2Vec
 from models.ts_tcc.trainer import Trainer_TS_TCC
+from models.rae_mepc.trainer import Trainer_RAE_MEPC
 from models.stoc.trainer import Trainer_STOC
 
 
@@ -54,7 +55,7 @@ class Encode():
         elif self.model_name == 'ts_tcc':
             model = Trainer_TS_TCC(self.model_config)
         elif self.model_name == 'rae_mepc':
-            model = Trainer_RAE_MEPC(**self.model_config)
+            model = Trainer_RAE_MEPC(self.model_config)
         elif self.model_name == 'stoc':
             model = Trainer_STOC(self.model_config)
         return model
@@ -68,15 +69,7 @@ class Encode():
         """
 
         print("Start training model\n")
-
-        if self.model_name == 'ts2vec':
-            best_model = model.fit(self.train_loader, self.valid_loader)
-        elif self.model_name == 'ts_tcc':
-            best_model = model.fit(self.train_loader, self.valid_loader)
-        elif self.model_name == 'rae_mepc':
-            best_model = model.fit(self.train_loader, self.valid_loader)
-        elif self.model_name == 'stoc':
-            best_model = model.fit(self.train_loader, self.valid_loader)
+        best_model = model.fit(self.train_loader, self.valid_loader)
         return best_model
 
     def save_model(self, best_model, best_model_path):
@@ -98,9 +91,7 @@ class Encode():
         # load best model
         if self.model_name == 'ts2vec':
             model.net.load_state_dict(torch.load(best_model_path))
-        elif self.model_name == 'ts_tcc':
-            model.model.load_state_dict(torch.load(best_model_path))
-        elif self.model_name == 'stoc':
+        else:
             model.model.load_state_dict(torch.load(best_model_path))
 
         # get representation
@@ -125,7 +116,10 @@ class Encode():
             }
         elif self.model_name == 'rae_mepc':
             replaced_key_dict = {
-                'repr_dim': 'output_dims'
+                'input_dim': 'ninp',
+                'repr_dim': 'hidden_size',
+                'window_size': 'window_length',
+                'num_epochs': 'num_epoch'
             }
         elif self.model_name == 'stoc':
             replaced_key_dict = {
@@ -158,13 +152,20 @@ class Encode():
             # RAE-MEPC 모델을 위한 train/validation/test 데이터셋 생성: shape = (batch_size, input_dims, window_size)
             elif self.model_name == 'rae_mepc':
                 window_size = self.parameter['window_size']
+                pred_size = window_size // 2
 
                 # 전체 데이터를 window_size 크기의 time window로 분할하여 input을 생성함
-                windows = np.split(dataset[:, :window_size * (T // window_size)], (T // window_size), -1)
+                windows = np.split(dataset[:, :, :-1 * pred_size][:, :, :window_size * ((T - pred_size) // window_size)],
+                                   ((T - pred_size) // window_size), -1)
                 windows = np.concatenate(windows, 0)
 
+                targets = np.roll(dataset, -1 * pred_size, axis=2)
+                targets = np.split(targets[:, :, :-1 * pred_size][:, :, :window_size * ((T - pred_size) // window_size)],
+                                   ((T - pred_size) // window_size), -1)
+                targets = np.concatenate(targets, 0)
+
                 # 분할된 time window 단위의 데이터를 tensor 형태로 축적
-                datasets.append(torch.utils.data.TensorDataset(torch.FloatTensor(windows)))
+                datasets.append(torch.utils.data.TensorDataset(torch.FloatTensor(windows), torch.FloatTensor(targets)))
 
             # STOC 모델을 위한 train/validation/test 데이터셋 생성: shape = (batch_size, input_dims, window_size)
             elif self.model_name == 'stoc':
