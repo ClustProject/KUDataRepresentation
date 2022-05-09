@@ -1,13 +1,9 @@
-import os
-from tabnanny import verbose
 import copy
-import tqdm
 import pandas as pd
 import numpy as np
 
 import torch
 import torch.nn.functional as F
-import torch.backends.cudnn as cudnn
 import torch.nn as nn
 
 import sys
@@ -17,19 +13,14 @@ from stoc import STOC
 
 
 class Trainer_STOC():
-    """
-    Initialize a trainer.
-
-    Args:
-        input_dims (int): The input dimension. For a univariate time series, this should be set to 1.
-        output_dim (int): The representation dimension.
-        feature_size (int): The dimension of the Transformer encoder layer used to encode input time series.
-        device (int): The gpu used for training and inference.
-        lr (int): The learning rate.
-        batch_size (int): The batch size.
-        patience (int): The number of epochs with no improvement after which training will be stopped.
-    """
     def __init__(self, config):
+        """
+        Initialize Trainer_RAE_MEPC class and prepare model and optimizer for training.
+
+        :param config: configuration
+        :type config: dictionary
+        """
+
         self.lr = config['lr']
         self.patience = config['patience']
         self.batch_size = config['batch_size']
@@ -38,109 +29,117 @@ class Trainer_STOC():
         self.input_dim = config['input_dim']
         self.feature_size = config['feature_size']
         self.output_dim = config['output_dim']
+        self.window_size = config['window_size']
         
         # GPU 설정
         self.device = config['device']
         
-        # model, optimier, scheduler, criterion 초기화
+        # model, optimizer, scheduler, criterion 초기화
         self.init_model()
-
 
     def init_model(self):
         """
         Initialize mode, optimizer, scheduler, criterion
-
         """
+
         self.model = STOC(self.input_dim, self.feature_size, self.output_dim).to(self.device)
         self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.lr)
         self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=100, eta_min=0.00001)
         self.criterion = nn.MSELoss()
 
-
     def fit(self, train_loader, valid_loader):
         """
-        Train the STOC model to fit trainset. Retrun the best model which has the minimum valid loss.
+        Train the STOC model
 
-        Args:
-            train_loader (DataLoader): train dataloader.
-            valid_loader (DataLoader): valid dataloader.
-            
-        Returns:
-            best_model (model): trained STOC Model.
+        :param train_loader: train dataloader
+        :type train_loader: DataLoader
 
+        :param valid_loader: validation dataloader
+        :type valid_loader: DataLoader
+
+        :return: trained STOC model
+        :rtype: model
         """
+
         min_loss = 10e15
 
         # for early stopping
         self.trigger_times = 0
         self.early_stopped = False
 
-
         for epoch in range(self.num_epochs):
             min_loss = self._train_epoch(epoch, min_loss, train_loader, valid_loader)
-
         return self.best_model 
-
 
     def _train_epoch(self, epoch, min_loss, train_loader, valid_loader):
         """
-        Train the STOC model during 1 epoch. 
-        
-        Args:
-            epoch (int): 
-            min_loss (int): The minimum epoch loss until previous epoch
-            train_loader (DataLoader): train dataloader.
-            valid_loader (DataLoader): valid dataloader.
-            verbose (bool): Whether to print the training loss after each epoch.
-            
-        Returns:
-            min_loss (int): The minimum epoch loss after this epoch
+        Train STOC model for one epoch
 
+        :param epoch: current epoch
+        :type epoch: int
+
+        :param min_loss: minimum epoch loss until previous epoch
+        :type min_loss: float
+
+        :param train_loader: train dataloader
+        :type train_loader: DataLoader
+
+        :param valid_loader: validation dataloader
+        :type valid_loader: DataLoader
+
+        :return: the minimum epoch loss after this epoch
+        :rtype: float
         """
+
         self.model.train()
         epoch_loss = 0
 
         for x, targets in train_loader:
-            x = x.transpose(1, 2).to(self.device)  # batch, window_size, input_dim 
-            targets = targets.transpose(1, 2).to(self.device)  # batch, forecast_step, input_dim 
+            x = x.transpose(1, 2).to(self.device)  # shape=(batch, window_size, input_dim)
+            targets = targets.transpose(1, 2).to(self.device)  # shape=(batch, forecast_step, input_dim)
 
             self.optimizer.zero_grad()
-            output = self.model(True, x)  # batch, window_size, input_dim 
-            loss = self.criterion(output, targets)
-            loss.backward()
 
+            # get loss
+            output = self.model(True, x)  # shape=(batch, window_size, input_dim)
+            loss = self.criterion(output, targets)
+
+            # backward propagation
+            loss.backward()
             self.optimizer.step()
             self.scheduler.step()
+
             epoch_loss += loss.item()
 
-        print(f"Epoch #{epoch + 1}: loss={epoch_loss}")
+        print(f"Epoch #{epoch + 1}: loss={epoch_loss / len(train_loader)}")
 
+        # validation
         val_loss = self.evaluate(valid_loader)
-        print(f"Epoch #{epoch + 1}: validation loss={val_loss}\n")
+        print(f"Epoch #{epoch + 1}: validation loss={val_loss / len(valid_loader)}\n")
 
+        # update minimum loss
         if val_loss >= min_loss:
             self.trigger_times += 1
             if self.trigger_times >= self.patience:
                 self.early_stopped = True
                 return min_loss
 
+        # update best model
         elif val_loss < min_loss:
             self.trigger_times = 0
             self.best_model = copy.deepcopy(self.model)
             min_loss = val_loss
-
         return min_loss
-
 
     def evaluate(self, valid_loader):
         """
-        Evaluate the trained model about valid dataset
+        Evaluate the STOC model
 
-        Args:
-            valid_loader (DataLoader): valid dataloader.
+        :param valid_loader: validation dataloader
+        :type valid_loader: DataLoader
 
-        Returns:
-            eval_loss (int): The evaluation loss about valid dataset
+        :return: validation loss
+        :rtype: float
         """
 
         self.model.eval()
@@ -151,40 +150,51 @@ class Trainer_STOC():
                 x = x.transpose(1, 2).to(self.device)  
                 targets = targets.transpose(1, 2).to(self.device)  
 
+                # get loss
                 output = self.model(True, x)
                 eval_loss += self.criterion(output, targets).item()
-
         return eval_loss
 
     def encode(self, test_loader):
-        """ 
-        Compute representations using the model.
-        
-        Args:
-            test_loader (DataLoader): test dataset loader.
+        """
+        Encode raw data to representation using trained STOC model
 
-        Returns:
-            output (dataframe): Output representation vector.
+        :param test_loader: test dataloader
+        :type test_loader: DataLoader
+
+        :return: representation vectors
+        :rtype: dataFrame
         """
 
         self.model.eval()
-
-        final_output = torch.Tensor().to(self.device) 
         with torch.no_grad():
-            for x, _ in test_loader:
-                if len(x.shape) != 3:
-                    x = x[0]
-                x = x.transpose(1, 2).to(self.device)
-                
-                output = self.model(False, x)
-                final_output = torch.cat([final_output, output], dim=0)
-        
-        final_output = F.max_pool1d(
-            final_output.transpose(1, 2),
-            kernel_size=final_output.size(1),
-        ).transpose(1, 2)
-        final_output = final_output.squeeze(1)
+            output = []
+            for data in test_loader:
+                data = data[0]
 
-        final_output_df = pd.DataFrame(final_output.cpu().numpy())
-        final_output_df.columns = [f'V{i+1}' for i in range(final_output.shape[-1])]
-        return final_output_df
+                # split input into set of time windows without overlapping
+                # windows: shape=(T // window_size, window_size, input_dim)
+                windows = np.split(data[:, :, :self.window_size * (data.shape[-1] // self.window_size)],
+                                   (data.shape[-1] // self.window_size), -1)
+                windows = np.concatenate(windows, 0)
+                windows = torch.from_numpy(windows).transpose(1, 2).to(self.device)
+
+                # out: shape=(1, T, repr_dim)
+                out = self.model(False, windows)
+                out = out.reshape(-1, out.shape[-1]).unsqueeze(0)
+                output.append(out.cpu())
+
+            output = torch.cat(output, dim=0)
+
+        # 각 관측치의 전체 데이터를 time window로 분할하여 모델링하므로 time window마다 representation vector 도출
+        # 이때 STOC는 time window의 모든 시점에 대하여 representation vector가 도출되므로 최종적으로 (# observations, window_size * (T // window_size), repr_dim) 차원의 representation 도출
+        # 시점을 기준으로 1D max pooling을 적용하여 최종 representation 도출
+        output = F.max_pool1d(
+            output.transpose(1, 2),
+            kernel_size=output.size(1),
+        ).transpose(1, 2)
+        output = output.squeeze(1)
+
+        output_df = pd.DataFrame(output.numpy())
+        output_df.columns = [f'V{i+1}' for i in range(output.shape[-1])]
+        return output_df

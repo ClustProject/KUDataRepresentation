@@ -10,61 +10,67 @@ import copy
 
 
 class Trainer_TS2Vec:
-    '''The TS2Vec model'''
+    def __init__(self, input_dims, output_dims, hidden_dims, device, lr, batch_size, n_epochs, depth=10, temporal_unit=0):
+        """
+        Initialize a TS2Vec model
 
-    def __init__(
-            self,
-            input_dims,
-            output_dims=320,
-            hidden_dims=64,
-            depth=10,
-            device='cuda',
-            lr=0.001,
-            batch_size=16,
-            n_epochs=100,
-            temporal_unit=0
-    ):
-        ''' Initialize a TS2Vec model.
+        :param input_dims: The input dimension. For a univariate time series, this should be set to 1.
+        :type input_dims: int
 
-        Args:
-            input_dims (int): The input dimension. For a univariate time series, this should be set to 1.
-            output_dims (int): The representation dimension.
-            hidden_dims (int): The hidden dimension of the encoder.
-            depth (int): The number of hidden residual blocks in the encoder.
-            device (int): The gpu used for training and inference.
-            lr (int): The learning rate.
-            batch_size (int): The batch size.
-            temporal_unit (int): The minimum unit to perform temporal contrast. When training on a very long sequence, this param helps to reduce the cost of time and memory.
-        '''
+        :param output_dims: The representation dimension.
+        :type output_dims: int
+
+        :param hidden_dims: The hidden dimension of the encoder.
+        :type hidden_dims: int
+
+        :param depth: The number of hidden residual blocks in the encoder.
+        :type depth: int
+
+        :param device: The device used for training and inference(cuda or cpu).
+        :type device: str
+
+        :param lr: The learning rate.
+        :type lr: float
+
+        :param batch_size: The batch size.
+        :type batch_size: int
+
+        :param n_epochs: The number of epochs.
+        :type n_epochs: int
+
+        :param temporal_unit: The minimum unit to perform temporal contrast. When training on a very long sequence, this param helps to reduce the cost of time and memory.
+        :type temporal_unit: int
+        """
 
         super().__init__()
+
         self.device = device
         self.lr = lr
         self.batch_size = batch_size
         self.n_epochs = n_epochs
         self.temporal_unit = temporal_unit
 
-        self._net = TSEncoder(input_dims=input_dims, output_dims=output_dims, hidden_dims=hidden_dims, depth=depth).to(
-            self.device)
+        self._net = TSEncoder(input_dims=input_dims, output_dims=output_dims, hidden_dims=hidden_dims, depth=depth).to(self.device)
         self.net = torch.optim.swa_utils.AveragedModel(self._net)
         self.net.update_parameters(self._net)
 
         self.best_val_loss = 1e+08
 
     def fit(self, train_loader, valid_loader):
-        ''' Training the TS2Vec model.
+        """
+        Train the TS2Vec model
 
-        Args:
-            train_loader (DataLoader): train dataloader.
-            valid_loader (DataLoader): valid dataloader.
-            n_epochs (Union[int, NoneType]): The number of epochs. When this reaches, the training stops.
-            verbose (bool): Whether to print the training loss after each epoch.
+        :param train_loader: train dataloader
+        :type train_loader: DataLoader
 
-        Returns:
-            loss_log (list): a list containing the training losses on each epoch.
-            best_model (model): trained TS2Vec Encoder.
-        '''
+        :param valid_loader: validation dataloader
+        :type valid_loader: DataLoader
 
+        :return: trained TS2Vec Encoder
+        :rtype: model
+        """
+
+        # build optimizer
         optimizer = torch.optim.AdamW(self._net.parameters(), lr=self.lr)
 
         for epoch in range(self.n_epochs):
@@ -75,6 +81,7 @@ class Trainer_TS2Vec:
                 x = batch[0].permute(0, 2, 1)
                 x = x.to(self.device)
 
+                # make input
                 ts_l = x.size(1)
                 crop_l = np.random.randint(low=2 ** (self.temporal_unit + 1), high=ts_l + 1)
                 crop_left = np.random.randint(ts_l - crop_l + 1)
@@ -85,6 +92,7 @@ class Trainer_TS2Vec:
 
                 optimizer.zero_grad()
 
+                # get output
                 out1 = self._net(take_per_row(x, crop_offset + crop_eleft, crop_right - crop_eleft))
                 out1 = out1[:, -crop_l:]
 
@@ -112,20 +120,27 @@ class Trainer_TS2Vec:
         return self.best_model
 
     def save_best_model(self, valid_loader):
-        ''' Save the beset model.
+        """
+        Evaluate the TS2Vec model
 
-        Args:
-            valid_loader (DataLoader): valid dataloader.
-        '''
+        :param valid_loader: validation dataloader
+        :type valid_loader: DataLoader
+
+        :return: validation loss
+        :rtype: float
+        """
+
         val_loss = 0
         n_iters = 0
         org_training = self.net.training
+
         self.net.eval()
         with torch.no_grad():
             for batch in valid_loader:
                 x = batch[0].permute(0, 2, 1)
                 x = x.to(self.device)
 
+                # make input
                 ts_l = x.size(1)
                 crop_l = np.random.randint(low=2 ** (self.temporal_unit + 1), high=ts_l + 1)
                 crop_left = np.random.randint(ts_l - crop_l + 1)
@@ -134,6 +149,7 @@ class Trainer_TS2Vec:
                 crop_eright = np.random.randint(low=crop_right, high=ts_l + 1)
                 crop_offset = np.random.randint(low=-crop_eleft, high=ts_l - crop_eright + 1, size=x.size(0))
 
+                # get output
                 out1 = self._net(take_per_row(x, crop_offset + crop_eleft, crop_right - crop_eleft))
                 out1 = out1[:, -crop_l:]
 
@@ -151,6 +167,7 @@ class Trainer_TS2Vec:
 
         val_loss /= n_iters
 
+        # update best model
         if val_loss < self.best_val_loss:
             self.best_val_loss = val_loss
             self.best_model = copy.deepcopy(self.net)
@@ -159,26 +176,31 @@ class Trainer_TS2Vec:
         return val_loss
 
     def encode(self, test_loader):
-        ''' Compute representations using the model.
+        """
+        Encode raw data to representation using trained TS2Vec model
 
-        Args:
-            test_loader (DataLoader): test dataset loader.
-        Returns:
-            output (dataframe): Output representation vector.
-        '''
+        :param test_loader: test dataloader
+        :type test_loader: DataLoader
+
+        :return: representation vectors
+        :rtype: dataFrame
+        """
 
         org_training = self.net.training
-        self.net.eval()
 
+        self.net.eval()
         with torch.no_grad():
             output = []
             for batch in test_loader:
                 x = batch[0].permute(0, 2, 1)
+
+                # out: shape=(batch_size, T, repr_dim)
                 out = self.net(x.to(self.device, non_blocking=True), mask=None).cpu()
                 output.append(out)
 
             output = torch.cat(output, dim=0)
 
+        # 각 관측치의 모든 시점에 대하여 representation vector가 도출되므로 시점을 기준으로 1D max pooling을 적용하여 최종 representation 도출
         output = F.max_pool1d(
             output.transpose(1, 2),
             kernel_size=output.size(1),
