@@ -206,8 +206,7 @@ class Encode():
 
             # RAE-MEPC & STOC 모델을 위한 train/validation 데이터셋 생성: input time window와 예측 time window로 구성
             # input time window: shape = (batch_size, input_dims, window_size)
-            # RAE-MEPC의 예측 time window는 input time window의 각 시점에서 window_size // 2만큼 이동한 미래 데이터: shape = (batch_size, input_dims, window_size)
-            # STOC의 예측 time window는 input time window의 마지막 시점 이후 forecast_step 길이의 미래 데이터: shape = (batch_size, input_dims, forecast_step)
+            # 예측 time window는 input time window의 각 시점에서 forecast_step만큼 이동한 미래 데이터: shape = (batch_size, input_dims, window_size)
             else:
                 window_size = self.parameter['window_size']
                 if self.model_name == 'stoc':
@@ -225,10 +224,6 @@ class Encode():
                 targets = np.split(targets[:, :, :-1 * forecast_step][:, :, :window_size * ((T - forecast_step) // window_size)],
                                    ((T - forecast_step) // window_size), -1)
                 targets = np.concatenate(targets, 0)
-
-                # STOC 모델은 input time window의 마지막 시점 이후 forecast_step 길이의 미래 데이터를 예측 time window로 사용
-                if self.model_name == 'stoc':
-                    targets = targets[:, :, :forecast_step]
 
                 # 분할된 time window 단위의 데이터를 tensor 형태로 축적
                 datasets.append(torch.utils.data.TensorDataset(torch.FloatTensor(windows), torch.FloatTensor(targets)))

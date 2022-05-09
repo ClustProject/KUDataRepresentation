@@ -96,7 +96,7 @@ class Trainer_STOC():
 
         for x, targets in train_loader:
             x = x.transpose(1, 2).to(self.device)  # shape=(batch, window_size, input_dim)
-            targets = targets.transpose(1, 2).to(self.device)  # shape=(batch, forecast_step, input_dim)
+            targets = targets.transpose(1, 2).to(self.device)  # shape=(batch, window_size, input_dim)
 
             self.optimizer.zero_grad()
 

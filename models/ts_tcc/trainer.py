@@ -63,7 +63,7 @@ class Trainer_TS_TCC:
             
             # validation
             valid_loss = self.model_evaluate(valid_loader)
-            print(f"Epoch #{epoch + 1}: validation loss={valid_loss}\n")
+            print(f"Epoch #{epoch}: validation loss={valid_loss}\n")
 
             # update best model
             if valid_loss < best_valid_loss:
